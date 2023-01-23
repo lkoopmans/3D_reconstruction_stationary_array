@@ -14,6 +14,10 @@ input_path = '/Volumes/2022_copy/predator/14_07_22/3'
 # Create a synchronization object containing the deployment's properties
 deployment = SyncVideoSet(input_path, recut_videos=True, single_video_mode=True)
 
+import pickle
+with open('results/deployments/Videos_11_12_22_1.pkl', 'rb') as input:
+    temp = pickle.load(input)
+
 '''
 # Set path to matlab
 deployment.path_to_matlab = '/Applications/MATLAB_R2022a.app/bin/matlab'

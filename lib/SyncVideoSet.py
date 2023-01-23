@@ -14,26 +14,25 @@ import datetime
 
 
 class SyncVideoSet:
-    def __init__(self, path_in, path_out='', recut_videos=False, single_video_mode=False, calibration_video_mode=1,
-                 load_data=True):
-        print('---------- INITIALIZE SYNCHRONIZATION ----------')
-        print('Start synchronizing video set found in', path_in)
 
-        # output_name
+    def __init__(self, path_in, mode=1):
+        print('---------- INITIALIZE SYNCHRONIZATION ----------')
+        print('Start analyzing deployment found in', path_in)
+
+        # Define input output paths for the deployment
         temp = path_in.split('/')
         output_name = temp[-3] + '_' + temp[-2] + '_' + temp[-1]
         cd = os.getcwd()
 
         self.filename = cd + '/results/deployments/' + output_name + '.pkl'
-
         self.output_name = temp[-3] + '_' + temp[-2] + '_' + temp[-1]
-        self.calibration_video_mode = calibration_video_mode
-
-        self.recut_videos = recut_videos
         self.path_in = path_in
-        self.path_out = path_out
+        self.path_out = path_in
 
-        self.single_video_mode = single_video_mode
+        self.mode = mode
+
+        self.recut_videos = False
+        self.single_video_mode = False
 
         # Get the camera and video names from the sub-folders
         print('Read video folders...')
@@ -45,43 +44,50 @@ class SyncVideoSet:
                 video_names[idx] = np.sort(os.listdir(path_in + '/' + camera_names[idx]))
 
             self.flag_folder_input = True
-        else:
-            camera_names = []
-            video_names = []
-            print('ERROR: Folder does not exist')
-            self.flag_folder_input = False
 
+        else:
+            print("I/O error: path does not exist")
+            sys.exit()
+
+        # Variables to store info on deployment
         self.camera_names = camera_names
         self.number_of_cameras = int(len(camera_names))
         self.number_of_videos = [None] * self.number_of_cameras
         self.base_code = [None] * self.number_of_cameras
         self.calibration_video_names = [None] * self.number_of_cameras
         self.video_names = video_names
-
-        # Get base-code from the second, full video and remove all videos not containing this code
-        print('Clean folders...')
-        get_video_base_code(self)
-
-        remove_cut_files = False
-        if recut_videos:
-            remove_cut_files = True
-
-        remove_additional_videos(self, remove_cut_files)
-
-        # Get meta deta from videos
-        print('Get metadata...')
         self.fps = [None] * self.number_of_cameras
         self.sample_rate_audio = [None] * self.number_of_cameras
         self.duration = [None] * self.number_of_cameras
         self.width = [None] * self.number_of_cameras
         self.height = [None] * self.number_of_cameras
         self.audio_channels = []
+        self.lag_out_cal = []
+        self.lag_out = []
+        self.lag_matrix = []
+        self.lag_matrix_calibration = []
+        self.flag_same_inputs = []
+        self.calib_interval = []
+        self.stereo_parameters = []
+
+        # If analysed before, load data
+        if os.path.exists(self.filename):
+            self.load()
+            print('Data imported from', self.filename)
+            return
+
+        # Get base-code from the second, full video and remove all videos not containing this code
+        print('Clean folders...')
+        get_video_base_code(self)
+        remove_additional_videos(self)
+
+        # Get meta deta from videos
+        print('Get metadata...')
         load_meta_data(self)
 
         # Verify input data
         print('Verify input data...')
-        self.flag_same_inputs = []
-        self.lag_matrix = []
+
         verify_input_data(self)
 
         # After verification of the input data we can reduce list values to single values
@@ -89,79 +95,64 @@ class SyncVideoSet:
         self.fps = self.fps[0]
         self.height = self.height[0]
         self.width = self.width[0]
-
-        # Additional empty arrays
-        self.lag_out_cal = []
-        self.lag_out = []
-        self.lag_matrix_calibration = []
-
-        # Coded information
         self.codec_preset = 'ultrafast'
 
-        # 3D reconstruction preset
-        self.path_to_matlab = '/Applications/MATLAB_R2022a.app/bin/matlab'
+    def get_time_lag(self, method='maximum', number_of_video_chapters_to_evaluate=4, force_recalculating=False):
 
-        # empty struct for calibration intervals
-        self.calib_interval = []
-
-        if os.path.exists(self.filename) and load_data:
-            self.load()
-
-    def get_time_lag(self, method='maximum', number_of_videos_to_evaluate=4, force_recalculating=False):
         print('---------- FIND TIME LAG BETWEEN VIDEOS ----------')
 
-        folder_names = self.path_in.split('/')
-        output_file_lag_matrix = 'results/lag_matrices/' + folder_names[-3] + '_' + folder_names[-2] + '_' + \
-                                 folder_names[-1] + '.npy'
-
         if any(self.lag_out) and not force_recalculating:
-            print('Video set is already analysed and this data is loaded from', self.filename)
+            print('Lag data was imported')
         else:
-            self.lag_matrix = get_time_lag_matrix(self, method, number_of_videos_to_evaluate)
-            with open(output_file_lag_matrix, 'wb'):
-                np.save(output_file_lag_matrix, self.lag_matrix)
+            self.lag_matrix = get_time_lag_matrix(self, method, number_of_video_chapters_to_evaluate)
 
-        # Get time lag between calibration videos
-        if self.calibration_video_mode == 1 and np.sum(self.lag_matrix_calibration) == 0:
+            # Determine final lag values
+            lag_out_all, lag_out_cal_all = get_lag_vector_from_matrix(self, self.lag_matrix, self.single_video_mode)
+            lag_out_all = lag_out_all / self.fps
+
+            if self.mode == 0:
+                self.lag_out_cal = lag_out_cal_all / self.fps
+
+            self.lag_out = lag_out_all
+
+        # Get time lag between calibration videos when
+        if self.mode == 1 and np.sum(self.lag_matrix_calibration) == 0:
             self.lag_matrix_calibration = get_time_lag_matrix(self, method='calibration_video',
-                                                              number_of_videos_to_evaluate=1)
+                                                              number_of_video_chapters_to_evaluate=1)
             lag_out_single, lag_out_cal_single = get_lag_vector_from_matrix(self, self.lag_matrix_calibration, True)
             self.lag_out_cal = lag_out_cal_single / self.fps
 
-        # Determine final lag values
-        lag_out_all, lag_out_cal_all = get_lag_vector_from_matrix(self, self.lag_matrix, self.single_video_mode)
-        lag_out_all = lag_out_all / self.fps
-
-        if self.calibration_video_mode == 0:
-            self.lag_out_cal = lag_out_cal_all / self.fps
-
-        self.lag_out = lag_out_all
+        self.save()
 
     def cut_and_merge_videos(self, merge=False):
         print('---------- CUT AND MERGE VIDEO CHAPTERS ----------')
 
         if self.recut_videos:
-            get_trimmed_videos(self, False)
+            cut_calibration_videos_mode_0(self, False)
         if merge:
             merge_synced_videos(self)
 
         clean_video_names(self)
+        self.save()
 
     def get_calibration_videos(self):
-        if self.calibration_video_mode == 0:
-            if self.recut_videos:
-                get_trimmed_videos(self, True)
+        print('---------- EXTRACT SYNCED CALIBRATION VIDEOS ----------')
+        if self.mode == 0:
+            cut_calibration_videos_mode_0(self, True)
             clean_video_names(self)
         else:
             cut_calibration_videos(self)
+        self.save()
 
     def detect_calibration_videos(self):
+        print('---------- DETECT CALIBRATION VIDEOS ----------')
         if any(v is None for v in self.calibration_video_names):
             detect_calibration_videos(self)
         else:
-            print('Calibration data was loaded')
+            print('Calibration data was imported')
+        self.save()
 
-    def compute_3d_matrices(self, square_size_mm='40', save_folder='results/calib_results'):
+    def compute_3d_matrices(self, square_size_mm='30', save_folder='results/calib_results'):
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
 
@@ -169,25 +160,46 @@ class SyncVideoSet:
             compute_3d_matrices_matlab_single_video(self, square_size_mm, save_folder)
         else:
             compute_3d_matrices_matlab(self)
+        self.save()
 
     def generate_images_from_calibration_video(self, frames_per_x_sec):
         generate_calibration_images(self, frames_per_x_sec)
 
-    def save_old(self):
-        path = fr'results/deployments/{self.output_name}.pkl'
-
-        with open(path, 'wb') as output:
-            pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
-
     def load(self):
+        'Loads all data from a stucture'
         with open(self.filename, 'rb') as input:
             temp = pickle.load(input)
+
         self.calib_interval = temp.calib_interval
         self.calibration_video_names = temp.calibration_video_names
         self.lag_out = temp.lag_out
         self.lag_matrix = temp.lag_matrix
         self.lag_out_cal = temp.lag_out_cal
         self.lag_matrix_calibration = temp.lag_matrix_calibration
+        self.camera_names = temp.camera_names
+        self.number_of_cameras = temp.number_of_cameras
+        self.number_of_videos = temp.number_of_videos
+        self.base_code = temp.base_code
+        self.calibration_video_names = temp.calibration_video_names
+        self.video_names = temp.video_names
+        self.fps = temp.fps
+        self.sample_rate_audio = temp.sample_rate_audio
+        self.duration = temp.duration
+        self.width = temp.width
+        self.height = temp.height
+        self.audio_channels = temp.audio_channels
+        self.lag_out_cal = temp.lag_out_cal
+        self.lag_out = temp.lag_out
+        self.lag_matrix = temp.lag_matrix
+        self.lag_matrix_calibration = temp.lag_matrix_calibration
+        self.flag_same_inputs = temp.flag_same_inputs
+        self.calib_interval = temp.calib_interval
+
+        try:
+            self.stereo_parameters = temp.stereo_parameters
+        except:
+            pass
+
         return self
 
     def save(self):
@@ -216,18 +228,11 @@ def get_video_base_code(self):
     return self
 
 
-def remove_additional_videos(params, remove_cut_files):
+def remove_additional_videos(params):
     for i in range(params.number_of_cameras):
-        if remove_cut_files:
-            files_to_delete = [s for s in params.video_names[i][:] if (not (".MP4" in s or ".mp4" in s)
-                                                                           or "._GH" in s
-                                                                           or "._GX" in s
-                                                                           or "_cut" in s)]
-
-        else:
-            files_to_delete = [s for s in params.video_names[i][:] if (not (".MP4" in s or ".mp4" in s)
-                                                                           or "._GH" in s
-                                                                           or "._GX" in s)]
+        files_to_delete = [s for s in params.video_names[i][:] if (not (".MP4" in s or ".mp4" in s)
+                                                                   or "._GH" in s
+                                                                   or "._GX" in s)]
 
         for file_name in files_to_delete:
 
@@ -249,12 +254,13 @@ def remove_additional_videos(params, remove_cut_files):
 
 def load_meta_data(self):
     for idx in range(self.number_of_cameras):
-        if self.calibration_video_mode == 0:
+        if self.mode == 0:
             video_file = self.path_in + str('/') + self.camera_names[idx] + str('/') + self.video_names[idx][0]
         else:
-            max_idx = len(self.video_names[idx][:])-1
+            max_idx = len(self.video_names[idx][:]) - 1
 
-            video_file = self.path_in + str('/') + self.camera_names[idx] + str('/') + self.video_names[idx][min(10, max_idx)]
+            video_file = self.path_in + str('/') + self.camera_names[idx] + str('/') + self.video_names[idx][
+                min(10, max_idx)]
 
         temp_file = os.path.splitext(video_file)[0] + '.json'
 
@@ -350,7 +356,7 @@ def get_lag_vector_from_matrix(params, lag_matrix, single_video_mode):
     return lag_out_all, lag_out_calibration
 
 
-def get_trimmed_videos(params, only_calibration):
+def cut_calibration_videos_mode_0(params, only_calibration):
     ts = time.time()
     for i in range(params.number_of_cameras):
         path_in = params.path_in + '/' + params.camera_names[i] + '/' + params.video_names[i][0]
@@ -624,10 +630,23 @@ def cut_calibration_videos(params):
     for name in params.calibration_video_names:
         temp = name.split('.')
         path_input = os.path.join(params.path_in, params.camera_names[c], name)
-        path_output = os.path.join(params.path_in, params.camera_names[c], temp[0] + '_cal.' + temp[1])
-        s_start = params.lag_out_cal[c] + params.calib_interval[c][0]
-        s_end = params.lag_out_cal[c] + params.calib_interval[c][1]
 
-        ip.cut_video(path_input, path_output, s_start, s_end)
+        if '_cal' not in temp[0]:
+            path_output = os.path.join(params.path_in, params.camera_names[c], temp[0] + '_cal.' + temp[1])
+            params.calibration_video_names[c] = temp[0] + '_cal.' + temp[1]
+            cal_video_name = temp[1]
+        else:
+            path_output = os.path.join(params.path_in, params.camera_names[c], name)
+            cal_video_name = name
+
+        if os.path.exists(path_output):
+            print('Calibration video', cal_video_name,
+                  'was found. Delete this file to re-sync video')
+        else:
+            intervals = np.array(params.calib_interval)
+            s_start = params.lag_out_cal[c] + min(intervals[:, 0])
+            s_end = params.lag_out_cal[c] + max(intervals[:, 1])
+
+            ip.cut_video(path_input, path_output, s_start, s_end)
 
         c += 1
