@@ -1,8 +1,7 @@
-
 import cv2 as cv
 import glob
 import numpy as np
-import time
+from scipy import linalg
 from lib import ImageProcessingFunctions as ip
 import os
 
@@ -20,7 +19,7 @@ def index_images(image_names, t_interval, delta_t):
     return images
 
 
-def compute_stereo_params(deployment):
+def compute_stereo_params(deployment, extract_new_images_from_video=True):
     print('---------- COMPUTING STEREO PARAMETERS ----------')
     for i in range(len(deployment.calibration_video_names)):
         if '_cal' not in deployment.calibration_video_names[i]:
@@ -33,7 +32,8 @@ def compute_stereo_params(deployment):
         calibration_path = os.path.join(deployment.path_in, deployment.camera_names[i],
                                         deployment.calibration_video_names[i])
 
-        ip.extract_frames(calibration_path, delta_t)
+        if extract_new_images_from_video:
+            ip.extract_frames(calibration_path, delta_t)
 
     base_name_1 = os.path.splitext(os.path.basename(deployment.calibration_video_names[0]))[0]
     base_name_2 = os.path.splitext(os.path.basename(deployment.calibration_video_names[1]))[0]
@@ -41,19 +41,21 @@ def compute_stereo_params(deployment):
     output_directory_1 = os.path.join('images/detection_images', base_name_1, '*')
     output_directory_2 = os.path.join('images/detection_images', base_name_2, '*')
 
-    t0 = time.time()
-
     rows = 8  # number of checkerboard rows.
     columns = 11  # number of checkerboard columns.
     world_scaling = 30  # change this to the real world square size
 
+    # sort list
+    output_directory_1 = sorted(glob.glob(output_directory_1))
+    output_directory_2 = sorted(glob.glob(output_directory_2))
+
     images_1 = []
-    for image_name in sorted(glob.glob(output_directory_1)):
+    for image_name in output_directory_1:
         im = cv.imread(image_name, 1)
         images_1.append(im)
 
     images_2 = []
-    for image_name in sorted(glob.glob(output_directory_2)):
+    for image_name in output_directory_2:
         im = cv.imread(image_name, 1)
         images_2.append(im)
 
@@ -89,24 +91,24 @@ def compute_stereo_params(deployment):
     both_detected2 = []
 
     for c in range(int(number_of_images)):
-        gray1 = cv.cvtColor(images_1[c], cv.COLOR_BGR2GRAY)
-        gray2 = cv.cvtColor(images_2[c], cv.COLOR_BGR2GRAY)
+        gray1 = cv.cvtColor(images_1[c], cv.COLOR_RGB2GRAY)
+        gray2 = cv.cvtColor(images_2[c], cv.COLOR_RGB2GRAY)
 
         # find the checkerboard
         ret1, corners1 = cv.findChessboardCorners(gray1, (rows, columns), None)
         ret2, corners2 = cv.findChessboardCorners(gray2, (rows, columns), None)
 
-        conv_size = (8, 8)
+        conv_size = (3, 3)
 
         if ret1 or ret2:
-            print('Image', str(c) + '/' + str(number_of_images) + '. Checkerboard detected.')
+            print('Image', str(c + 1) + '/' + str(number_of_images) + '. Checkerboard detected.')
         else:
-            print('Image', str(c) + '/' + str(number_of_images)+'. No checkerboard detected.')
+            print('Image', str(c + 1) + '/' + str(number_of_images) + '. No checkerboard detected.')
 
         if ret1:
             corners1 = cv.cornerSubPix(gray1, corners1, conv_size, (-1, -1), criteria)
 
-            cv.waitKey(500)
+            # cv.waitKey(500)
 
             object_points_1.append(objp)
             image_points_1.append(corners1)
@@ -115,7 +117,7 @@ def compute_stereo_params(deployment):
         if ret2:
             corners2 = cv.cornerSubPix(gray2, corners2, conv_size, (-1, -1), criteria)
 
-            cv.waitKey(500)
+            # cv.waitKey(500)
 
             object_points_2.append(objp)
             image_points_2.append(corners2)
@@ -129,8 +131,12 @@ def compute_stereo_params(deployment):
 
             min_max[1] = delta_t * c
 
-            both_detected1.append(c1-1)
-            both_detected2.append(c2-1)
+            both_detected1.append(c1 - 1)
+            both_detected2.append(c2 - 1)
+
+        if not (ret1 or ret2):
+            os.remove(output_directory_1[c])
+            os.remove(output_directory_2[c])
 
     ret1, mtx1, dist1, rvecs1, tvecs1 = cv.calibrateCamera(object_points_1, image_points_1, (width, height), None, None)
     ret2, mtx2, dist2, rvecs2, tvecs2 = cv.calibrateCamera(object_points_2, image_points_2, (width, height), None, None)
@@ -142,7 +148,32 @@ def compute_stereo_params(deployment):
                                                                  dist1,
                                                                  mtx2, dist2, (width, height), criteria=criteria,
                                                                  flags=stereocalibration_flags)
+
     stereo_parameters = {'mtx1': mtx1, 'dist1': dist1, 'mtx2': mtx2, 'dist2': dist2, 'ret': ret, 'ret1': ret1, 'ret2':
         ret2, 'CM1': CM1, 'CM2': CM2, 'R': R, 'T': T, 'E': E, 'F': F}
 
     return stereo_parameters
+
+
+def triangulate(x1, x2, mtx1, mtx2, R, T):
+    # compute projection matrices
+    p1 = mtx1 @ np.concatenate([np.eye(3), [[0], [0], [0]]], axis=-1)
+    p2 = mtx2 @ np.concatenate([R, T], axis=-1)  # projection matrix for C2
+
+    p3ds = []
+    for uv1, uv2 in zip(x1, x2):
+        _p3d = direct_linear_transform(p1, p2, uv1, uv2)
+        p3ds.append(_p3d)
+
+    return np.array(p3ds)
+
+
+def direct_linear_transform(p1, p2, point1, point2):
+    A = [point1[1] * p1[2, :] - p1[1, :], p1[0, :] - point1[0] * p1[2, :], point2[1] * p2[2, :] - p2[1, :],
+         p2[0, :] - point2[0] * p2[2, :]]
+    A = np.array(A).reshape((4, 4))
+
+    B = A.transpose() @ A
+    U, s, Vh = linalg.svd(B, full_matrices=False)
+
+    return Vh[3, 0:3] / Vh[3, 3]
