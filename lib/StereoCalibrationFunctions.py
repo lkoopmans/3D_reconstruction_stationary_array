@@ -4,6 +4,7 @@ import numpy as np
 from scipy import linalg
 from lib import ImageProcessingFunctions as ip
 import os
+import scipy
 
 
 def index_images(image_names, t_interval, delta_t):
@@ -177,3 +178,26 @@ def direct_linear_transform(p1, p2, point1, point2):
     U, s, Vh = linalg.svd(B, full_matrices=False)
 
     return Vh[3, 0:3] / Vh[3, 3]
+
+
+def detect_measurement_pole(img):
+    imgHSV = cv.cvtColor(img, cv.COLOR_BGR2HSV)
+
+    mask = cv.inRange(imgHSV, (170, 100, 10), (180, 150, 255)) + cv.inRange(imgHSV, (0, 100, 10), (5, 150, 255))
+
+    mask2 = scipy.signal.convolve2d(mask, np.ones((10, 10)), 'same')
+    #mask[mask2 < 255 * 2] = 0
+    xx, yy = np.meshgrid(np.arange(1, img.shape[1] + 1), np.arange(1, img.shape[0] + 1))
+
+    x = xx[mask == 255]
+    y = yy[mask == 255]
+
+    xmin = int(min(x))
+    xmax = int(max(x))
+
+    ymin = int(np.mean(y[x == xmin]))
+    ymax = int(np.mean(y[x == xmax]))
+
+    p
+
+    return np.array([[xmin, ymin], [xmax, ymax]])

@@ -7,7 +7,7 @@ from lib import StereoCalibrationFunctions as sc
 # calibration_video_mode = 0 --> If the calibration video is contained in the first video chapter of the main video
 # calibration_video_mode = 1 --> If the calibration video is contained in a single video
 
-path_in = '/Volumes/Disk_B/Predator'
+path_in = '/Volumes/Disk_M/Predator'
 init_list = os.listdir(path_in)
 all_deployments = []
 
@@ -20,16 +20,11 @@ t0 = time.time()
 
 for name in all_deployments:
     try:
-        deployment = SyncVideoSet(name, recut_videos=True, calibration_video_mode=1)
-
+        deployment = SyncVideoSet(name, mode=1)
         deployment.detect_calibration_videos()
-
-        deployment.get_time_lag(method='custom', number_of_video_chapters_to_evaluate=5)
-
+        deployment.get_time_lag(method='custom', number_of_video_chapters_to_evaluate=6)
         deployment.get_calibration_videos()
-
-        deployment.stereo_parameters = sc.compute_stereo_params(deployment)
-
+        deployment.stereo_parameters = sc.compute_stereo_params(deployment, extract_new_images_from_video=True)
         deployment.save()
     except:
         print('Caught')

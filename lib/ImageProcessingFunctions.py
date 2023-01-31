@@ -100,7 +100,7 @@ def cut_video(path_input, path_output, s_start, s_end):
         os.remove(path_output)
     print('Cut from', t1, 'to', t2)
     subprocess.run(
-        'ffmpeg -loglevel error -ss ' + t1 + ' -to ' + t2 + ' -i ' + path_input + ' -c:v libx264 -c:a aac -preset fast '
+        'ffmpeg -loglevel error -ss ' + t1 + ' -to ' + t2 + ' -i ' + path_input + ' -c:v libx264 -c:a aac -preset medium '
         + path_output, shell=True)
 
 
@@ -124,3 +124,13 @@ def cut_video_pairs(params, camera_pair, video_chapter, t_start, t_end, input_pa
         input_path + '/' + params.camera_names[camera] + '/' + params.video_names[camera][video_chapter])
     fish_detection.trimmed_clips_output_path = output_path
     fish_detection.get_video_pairs_for_detected_interval(all_intervals, params, camera, video_chapter)
+
+
+def get_roi(image_in):
+    # select ROI function
+    roi = cv2.selectROI(image_in)
+
+    # Crop selected roi from raw image
+    roi_cropped = image_in[int(roi[1]):int(roi[1] + roi[3]), int(roi[0]):int(roi[0] + roi[2])]
+
+    return roi_cropped
