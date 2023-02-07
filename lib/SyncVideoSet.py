@@ -73,7 +73,7 @@ class SyncVideoSet:
         # If analysed before, load data
         if os.path.exists(self.filename):
             self.load()
-            print('Data imported from', self.filename)
+            print('data imported from', self.filename)
             return
 
         # Get base-code from the second, full video and remove all videos not containing this code
@@ -650,3 +650,15 @@ def cut_calibration_videos(params):
             ip.cut_video(path_input, path_output, s_start, s_end)
 
         c += 1
+
+
+def list_all_deployments(path_in):
+    init_list = os.listdir(path_in)
+    all_deployments = []
+
+    for l in init_list:
+        subdir = os.listdir(os.path.join(path_in, l))
+        for k in subdir:
+            all_deployments.append(os.path.join(path_in, l, k))
+
+    return all_deployments

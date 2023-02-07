@@ -10,7 +10,7 @@ path_in = '/Volumes/Disk_M/Predator/10_12_2022/2'
 
 # Create a synchronization object containing the deployment's properties
 deployment = SyncVideoSet(path_in)
-output_path = 'results/clips/attack1'
+output_path = '../../results/clips/attack1'
 
 video_name = 'GH113665'
 time_interval = np.array([60+38, 60+42])
